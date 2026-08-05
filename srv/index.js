@@ -87,6 +87,33 @@ async function getTools() {
       });
     });
 
+    // Add specialized RITM operations
+    mcpTools.push({
+      name: 'comment_sc_req_item',
+      description: '[MCP] Add a comment to a Service Catalog Request Item (RITM) via MCP protocol. Comments are appended to the record.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          recordId: { type: 'string', description: 'Unique system ID (sys_id) of the RITM' },
+          comments: { type: 'string', description: 'Comment text to add to the RITM' }
+        },
+        required: ['recordId', 'comments']
+      }
+    });
+
+    mcpTools.push({
+      name: 'close_sc_req_item',
+      description: '[MCP] Close/complete a Service Catalog Request Item (RITM) by setting state to closed via MCP protocol.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          recordId: { type: 'string', description: 'Unique system ID (sys_id) of the RITM to close' },
+          closeNotes: { type: 'string', description: 'Closing notes/reason for closing the RITM' }
+        },
+        required: ['recordId', 'closeNotes']
+      }
+    });
+
     console.log(`Created ${mcpTools.length} MCP tools`);
     return mcpTools;
   } catch (error) {
@@ -176,6 +203,20 @@ app.post('/mcp', async (req, res) => {
           break;
         case 'delete':
           result = await snowConnector.delete(tableName, parsedArgs.recordId);
+          break;
+        case 'comment':
+          if (tableName === 'sc_req_item') {
+            result = await snowConnector.commentScReqItem(parsedArgs.recordId, parsedArgs.comments);
+          } else {
+            throw new Error(`Comment operation not supported for ${tableName}`);
+          }
+          break;
+        case 'close':
+          if (tableName === 'sc_req_item') {
+            result = await snowConnector.closeScReqItem(parsedArgs.recordId, parsedArgs.closeNotes);
+          } else {
+            throw new Error(`Close operation not supported for ${tableName}`);
+          }
           break;
         default:
           throw new Error(`Unknown operation: ${operation}`);

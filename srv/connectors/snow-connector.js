@@ -308,6 +308,61 @@ async function delete_(tableName, recordId) {
   }
 }
 
+// Comment on RITM (sc_req_item)
+async function commentScReqItem(recordId, comments) {
+  const client = await initializeSnowClient();
+
+  try {
+    const response = await client.patch(`/table/sc_req_item/${recordId}`, {
+      comments: comments
+    }, {
+      params: {
+        sysparm_fields: 'number,sys_id,state,sys_updated_on'
+      }
+    });
+
+    return {
+      success: true,
+      message: 'Comment added to RITM',
+      number: response.data.result.number,
+      sys_id: response.data.result.sys_id,
+      state: response.data.result.state,
+      sys_updated_on: response.data.result.sys_updated_on
+    };
+  } catch (error) {
+    throw new Error(`Failed to comment on RITM: ${error.response?.data?.error?.message || error.message}`);
+  }
+}
+
+// Close RITM (sc_req_item)
+async function closeScReqItem(recordId, closeNotes) {
+  const client = await initializeSnowClient();
+
+  try {
+    const response = await client.patch(`/table/sc_req_item/${recordId}`, {
+      state: '3',
+      close_notes: closeNotes
+    }, {
+      params: {
+        sysparm_fields: 'number,state,active,closed_at,close_notes'
+      }
+    });
+
+    return {
+      success: true,
+      message: 'RITM closed successfully',
+      number: response.data.result.number,
+      state: response.data.result.state,
+      active: response.data.result.active,
+      closed_at: response.data.result.closed_at,
+      close_notes: response.data.result.close_notes
+    };
+  } catch (error) {
+    throw new Error(`Failed to close RITM: ${error.response?.data?.error?.message || error.message}`);
+  }
+}
+
+
 module.exports = {
   initializeSnowClient,
   getAvailableTables,
@@ -316,5 +371,7 @@ module.exports = {
   get,
   query,
   update,
-  delete: delete_
+  delete: delete_,
+  commentScReqItem,
+  closeScReqItem
 };
