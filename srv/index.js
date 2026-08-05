@@ -32,12 +32,12 @@ async function getTools() {
     tables.forEach(table => {
       mcpTools.push({
         name: `query_${table.name}`,
-        description: `Query records from ${table.label}`,
+        description: `[MCP] Search ${table.label} records using ServiceNow query syntax. Apply filters to find multiple matching records (e.g., numberISRITM1234567). Returns list of results via MCP protocol.`,
         inputSchema: {
           type: 'object',
           properties: {
-            filter: { type: 'string', description: 'ServiceNow query filter' },
-            limit: { type: 'number', description: 'Max results (default: 10)' }
+            filter: { type: 'string', description: 'ServiceNow query filter (e.g., numberISRITM1234567 or stateINin_progress,closed)' },
+            limit: { type: 'number', description: 'Maximum number of results to return (default: 10)' }
           },
           required: ['filter']
         }
@@ -45,32 +45,32 @@ async function getTools() {
 
       mcpTools.push({
         name: `create_${table.name}`,
-        description: `Create a record in ${table.label}`,
+        description: `[MCP] Create a new ${table.label} record with specified fields via MCP protocol. Returns the created record with sys_id.`,
         inputSchema: {
           type: 'object',
-          properties: { fields: { type: 'object', description: 'Record fields' } },
+          properties: { fields: { type: 'object', description: 'Record field values (e.g., {short_description: "...", description: "..."})' } },
           required: ['fields']
         }
       });
 
       mcpTools.push({
         name: `get_${table.name}`,
-        description: `Get a record from ${table.label}`,
+        description: `[MCP] Retrieve a single ${table.label} record by sys_id via MCP protocol. Use this to fetch complete details of a specific record.`,
         inputSchema: {
           type: 'object',
-          properties: { recordId: { type: 'string', description: 'Record ID' } },
+          properties: { recordId: { type: 'string', description: 'Unique system ID (sys_id) of the record to retrieve' } },
           required: ['recordId']
         }
       });
 
       mcpTools.push({
         name: `update_${table.name}`,
-        description: `Update a record in ${table.label}`,
+        description: `[MCP] Update specific fields of a ${table.label} record by sys_id via MCP protocol. Returns the updated record.`,
         inputSchema: {
           type: 'object',
           properties: {
-            recordId: { type: 'string', description: 'Record ID' },
-            fields: { type: 'object', description: 'Fields to update' }
+            recordId: { type: 'string', description: 'Unique system ID (sys_id) of the record to update' },
+            fields: { type: 'object', description: 'Field values to update (e.g., {state: "in_progress"})' }
           },
           required: ['recordId', 'fields']
         }
@@ -78,10 +78,10 @@ async function getTools() {
 
       mcpTools.push({
         name: `delete_${table.name}`,
-        description: `Delete a record from ${table.label}`,
+        description: `[MCP] Delete a ${table.label} record by sys_id via MCP protocol. Warning: This operation cannot be undone.`,
         inputSchema: {
           type: 'object',
-          properties: { recordId: { type: 'string', description: 'Record ID' } },
+          properties: { recordId: { type: 'string', description: 'Unique system ID (sys_id) of the record to delete' } },
           required: ['recordId']
         }
       });
@@ -149,7 +149,14 @@ app.post('/mcp', async (req, res) => {
         parsedArgs = JSON.parse(args);
       }
 
-      const parts = name.split('_');
+      // Strip namespace prefix (e.g., "snowdevtest.snowdev0-get_sc_req_item" → "get_sc_req_item")
+      let toolName = name;
+      if (name.includes('-')) {
+        const lastDashIndex = name.lastIndexOf('-');
+        toolName = name.substring(lastDashIndex + 1);
+      }
+
+      const parts = toolName.split('_');
       const operation = parts[0];
       const tableName = parts.slice(1).join('_');
 
