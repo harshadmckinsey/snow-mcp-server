@@ -1,0 +1,16 @@
+---
+applications:
+  - name: snow-mcp-server
+    path: .
+    buildpack: nodejs_buildpack
+    memory: 256M
+    disk_quota: 512M
+    instances: 1
+    timeout: 30
+
+    env:
+      NODE_ENV: production
+      LOG_LEVEL: info
+
+    services:
+      - apicall-destination-service

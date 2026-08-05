@@ -1,0 +1,17 @@
+node_modules/
+npm-debug.log
+.git
+.gitignore
+.DS_Store
+.vscode/
+.idea/
+*.log
+.env
+.env.local
+dist/
+coverage/
+test/
+jest.config.js
+.eslintrc*
+.prettierrc
+nodemon.json

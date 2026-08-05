@@ -1,0 +1,37 @@
+{
+  "[development]": {
+    "auth": {
+      "passport": {
+        "strategy": "mock",
+        "users": {
+          "admin": {
+            "password": "admin",
+            "ID": "admin@example.com"
+          }
+        }
+      }
+    }
+  },
+  "[production]": {
+    "auth": {
+      "kind": "jwt"
+    }
+  },
+  "auth": {
+    "kind": "none"
+  },
+  "requires": {
+    "destinations": {
+      "kind": "service"
+    }
+  },
+  "odata": {
+    "version": "v4"
+  },
+  "log": {
+    "levels": {
+      "cds": "info",
+      "srv": "debug"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+_schema-version: '3.1'
+ID: snow-mcp-cap-server
+version: 1.0.0
+
+parameters:
+  enable-parallel-deployments: true
+
+build-parameters:
+  before-all:
+    - builder: custom
+      commands:
+        - npm ci
+
+modules:
+  - name: snow-mcp-cap-server
+    type: nodejs
+    path: .
+    parameters:
+      buildpack: nodejs_buildpack
+      memory: 256M
+      disk-quota: 512M
+      instances: 1
+      environment:
+        NODE_ENV: production
+        LOG_LEVEL: info
+    requires:
+      - name: snow-gen-destination
+
+resources:
+  - name: snow-gen-destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite
