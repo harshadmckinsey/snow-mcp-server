@@ -233,6 +233,26 @@ async function create(tableName, data) {
   }
 }
 
+// Get RITM questionnaire options/answers
+async function getScReqItemOptions(recordId) {
+  const client = await initializeSnowClient();
+
+  try {
+    const response = await client.get(`/table/sc_item_option_mtom`, {
+      params: {
+        sysparm_query: `request_item=${recordId}`,
+        sysparm_fields: 'sc_item_option.item_option_new.name,sc_item_option.item_option_new.question_text,sc_item_option.item_option_new.type,sc_item_option.value,sc_item_option.order,value',
+        sysparm_limit: 200
+      }
+    });
+
+    return response.data.result || [];
+  } catch (error) {
+    console.warn(`Warning: Could not fetch options for RITM ${recordId}: ${error.message}`);
+    return [];
+  }
+}
+
 // Generic READ/GET operation
 async function get(tableName, recordId) {
   const client = await initializeSnowClient();
@@ -244,10 +264,17 @@ async function get(tableName, recordId) {
       throw new Error('Record not found');
     }
 
-    return {
+    const result = {
       success: true,
       data: response.data.result
     };
+
+    // For RITM, also fetch questionnaire options
+    if (tableName === 'sc_req_item') {
+      result.options = await getScReqItemOptions(recordId);
+    }
+
+    return result;
   } catch (error) {
     throw new Error(`Failed to get record from ${tableName}: ${error.response?.data?.error?.message || error.message}`);
   }
@@ -373,5 +400,6 @@ module.exports = {
   update,
   delete: delete_,
   commentScReqItem,
-  closeScReqItem
+  closeScReqItem,
+  getScReqItemOptions
 };
