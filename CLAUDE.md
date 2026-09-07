@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-A lightweight MCP (Model Context Protocol) server that exposes ServiceNow Service Catalog Request Items (RITMs) as tools for SAP Joule integration. This is a **BTP-hosted MCP proxy** that bridges Joule (OAuth2 Client Credentials) to ServiceNow (service account credentials), following the SAP-recommended architecture for Joule-to-non-SAP MCP connectivity.
+A lightweight Express.js MCP (Model Context Protocol) proxy that bridges SAP Joule to ServiceNow's standard ITSM MCP server. This proxy handles OKTA token generation and forwards all MCP requests to the standard ServiceNow MCP server.
 
-**Status:** ✅ Production - Custom BTP MCP Proxy Pattern (as recommended by SAP Support)
+**Status:** ✅ Production - Standard ServiceNow MCP Server Integration
 
-**Reference:** Aligns with SAP Community blog "Building an Autonomous SAP Joule Agent for ServiceNow ITSM on SAP BTP" (May 2026)
+**Integration Pattern:** Joule → BTP-hosted MCP Proxy (OKTA token generation) → ServiceNow Standard MCP Server
 
 ## Architecture
 
@@ -15,90 +15,66 @@ SAP Joule (AI Assistant)
     ↓ MCP Protocol via BTP Destination (OAuth2 Client Credentials)
 Express.js MCP Proxy on BTP Cloud Foundry (Port 8080)
     ├── POST /mcp - JSON-RPC 2.0 handler (initialize, tools/list, tools/call)
-    └── GET /mcp - Simple tool listing
+    └── GET /mcp - List tools
          ↓
-ServiceNow Connector (Basic Auth Service Account)
-    ├── Retrieves credentials from SAP BTP Destination Service (snow_gen)
-    ├── Service account credentials (not user identity)
-    └── Makes REST calls to ServiceNow API
+OKTA Token Generation
+    ├── Retrieves OKTA credentials from BTP Destination Service (okta_gen)
+    ├── Generates access token for standard MCP server
+    └── Caches token (5-min buffer for expiry)
          ↓
-ServiceNow APIs
-    ├── sc_req_item (RITMs)
-    └── sc_item_option_mtom (Questionnaire/Form Answers)
+ServiceNow Standard MCP Server
+    ├── URL: https://mckinseydev.service-now.com/sncapps/mcp-server/mcp/servicenow_itsm_mcp_server
+    ├── Authentication: Bearer token (OKTA)
+    └── Returns all available ServiceNow ITSM tools
 ```
 
-### Why This Architecture?
+### Architecture Rationale
 
-Per SAP Support guidance (mid-2026):
-- ✅ **No native ServiceNow MCP connector**: The ServiceNow native MCP server requires Authorization Code flow, incompatible with Joule's OAuth2 Client Credentials
-- ✅ **Custom proxy required**: BTP-hosted MCP proxy handles the auth gap — Joule → OAuth2CC → Proxy → ServiceNow Basic Auth
-- ✅ **Service account credentials**: Simpler than IAS/OKTA token exchange; sufficient for automated RITM operations
-- ✅ **User identity propagation**: Not needed for current use case (automated requests); can add IAS/OKTA later if required
+- ✅ **Standard MCP server**: Uses ServiceNow's native ITSM MCP server instead of custom REST calls
+- ✅ **OKTA authentication**: Generates tokens to call the standard server
+- ✅ **Tool discovery**: Dynamically fetches all available tools from the standard server (not hardcoded)
+- ✅ **Token caching**: Efficient token reuse with automatic refresh on expiry
+- ✅ **Tool proxying**: Transparent proxying of all MCP tool calls to the standard server
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `srv/index.js` | Express.js MCP server, JSON-RPC handler, tool pre-discovery |
-| `srv/connectors/snow-connector.js` | ServiceNow REST client, credential retrieval from BTP |
-| `package.json` | Dependencies (express, axios) |
-| `manifest.yml` | Cloud Foundry deployment config |
-| `mta.yaml` | MTA deployment manifest (alternative) |
+| `srv/index.js` | Express.js MCP proxy, JSON-RPC handler, tool discovery from standard server |
+| `srv/connectors/standard-mcp-connector.js` | Calls standard MCP server, manages OKTA token generation/caching |
+| `srv/connectors/okta-connector.js` | OKTA token validation and configuration retrieval from BTP |
+| `package.json` | Dependencies (express, axios, jsonwebtoken) |
+| `.env.example` | Configuration template with OKTA credentials |
 
 ## MCP Tools
 
-The server exposes **7 tools** for Service Catalog Request Items (RITM):
+The proxy discovers and forwards all tools from the ServiceNow standard MCP server. Tool availability depends on ServiceNow instance configuration.
 
-### Generic CRUD Operations
+**Example tools provided by standard MCP server:**
+- Incident management (create, query, update, close incidents)
+- Change management (create, query, update changes)
+- Service Catalog Request Items (query, create, get, update, delete RITMs)
+- And more depending on standard server configuration
 
-| Tool | Operation | Description |
-|------|-----------|-------------|
-| `query_sc_req_item` | Search RITMs | Filter and find multiple RITMs using ServiceNow query syntax |
-| `get_sc_req_item` | Retrieve RITM | Fetch complete RITM details including questionnaire answers |
-| `create_sc_req_item` | Create RITM | Create new RITM with specified fields |
-| `update_sc_req_item` | Update RITM | Modify specific fields of existing RITM |
-| `delete_sc_req_item` | Delete RITM | Permanently delete an RITM record |
-
-### Specialized RITM Operations
-
-| Tool | Operation | Description |
-|------|-----------|-------------|
-| `comment_sc_req_item` | Add Comment | Append comments to RITM record |
-| `close_sc_req_item` | Close RITM | Complete RITM with closing notes (state=3) |
-
-### Example: Get RITM with Questionnaire Answers
+### Example: Query Incidents via Standard Server
 
 ```json
 {
   "method": "tools/call",
+  "id": 1,
   "params": {
-    "name": "get_sc_req_item",
+    "name": "servicenow_itsm_mcp_server-query_incident",
     "arguments": {
-      "recordId": "f2f9eb24a4900350116760bd2b595a83"
+      "filter": "stateINopen,in_progress",
+      "limit": 10
     }
   }
 }
 ```
 
-**Response includes:**
-- ✅ Complete RITM record (all fields)
-- ✅ Questionnaire answers array (sc_item_option_mtom)
-- ✅ Form question text, type, and user values
-
-### Example: Close RITM
-
-```json
-{
-  "method": "tools/call",
-  "params": {
-    "name": "close_sc_req_item",
-    "arguments": {
-      "recordId": "f2f9eb24a4900350116760bd2b595a83",
-      "closeNotes": "SAP: fulfilled. 2L period opening completed for IN12."
-    }
-  }
-}
-```
+**Response:**
+- ✅ Returns JSON from standard MCP server (no modification)
+- ✅ All standard server tools available through proxy
 
 ## MCP Endpoints
 
@@ -107,42 +83,45 @@ JSON-RPC 2.0 endpoint for MCP protocol
 
 **Supported Methods:**
 - `initialize` - Initialize connection with client info
-- `tools/list` - List all available tools
-- `tools/call` - Execute a tool
+- `tools/list` - Fetch all tools from standard MCP server
+- `tools/call` - Execute a tool (proxied to standard server)
 - `notifications/*` - Handle MCP notifications (no response)
 
 ### GET /mcp
-Simple HTTP GET to list tools (returns JSON array)
+Simple HTTP GET to list tools (returns all tools from standard server)
 
-## Credential Retrieval
+## Credential & Token Retrieval
 
-### ServiceNow Credentials
-The server retrieves ServiceNow credentials at runtime from SAP BTP Destination Service (`snow_gen`):
+### OKTA Token Generation (Required)
+The proxy generates OKTA access tokens to call the standard MCP server:
 
-1. **Get Destination Service credentials** from `VCAP_SERVICES` environment
-2. **Request OAuth2 token** from UAA using client credentials
-3. **Fetch destination** (`snow_gen`) from Destination Service API
-4. **Extract credentials** (URL, username, password)
-5. **Create Axios client** with Basic Auth
+1. **Get OKTA configuration** from SAP BTP Destination Service (`okta_gen`) or environment variables
+2. **Request access token** from OKTA token endpoint using client credentials
+3. **Cache token** with 5-minute expiry buffer (automatic refresh on expiry)
+4. **Use token** in Bearer Authorization header for standard MCP server calls
 
-**Fallback:** If BTP destination unavailable, reads from environment variables:
-- `SNOW_URL` - ServiceNow instance URL
-- `SNOW_USER` - ServiceNow username
-- `SNOW_PASSWORD` - ServiceNow password
+**OKTA Destination Configuration** (`okta_gen`):
+```
+Name: okta_gen
+Type: HTTP
+URL: https://your-org.okta.com
+Additional Properties:
+  clientid = your-okta-client-id
+  clientsecret = your-okta-client-secret
+  authServer = default
+```
 
-### OKTA Credentials (User Token Propagation)
-**Phase 1 (OKTA Support)** retrieves OKTA configuration from BTP Destination Service (`okta_gen`):
-
-1. Same flow as ServiceNow: Get token from UAA
-2. **Fetch destination** (`okta_gen`) from Destination Service API
-3. **Extract credentials** (Tenant URL, Client ID, Client Secret, Auth Server)
-4. **Create OKTA token exchange client**
-
-**Fallback:** If BTP destination unavailable, reads from environment variables:
+**Fallback Environment Variables:**
 - `OKTA_TENANT` - OKTA tenant URL (e.g., https://your-org.okta.com)
 - `OKTA_CLIENT_ID` - OKTA OAuth2 client ID
 - `OKTA_CLIENT_SECRET` - OKTA OAuth2 client secret
 - `OKTA_AUTH_SERVER` - OKTA authorization server (default: `default`)
+
+### Standard MCP Server Configuration
+**ServiceNow ITSM MCP Server (DEV):**
+- URL: `https://mckinseydev.service-now.com/sncapps/mcp-server/mcp/servicenow_itsm_mcp_server`
+- Client ID: `65a7f537e4ad4c419eb1ef297db0f351`
+- Authentication: OKTA Bearer Token
 
 ## Deployment
 
@@ -151,9 +130,7 @@ The server retrieves ServiceNow credentials at runtime from SAP BTP Destination 
 **Prerequisites:**
 - CF CLI installed and authenticated
 - Service instance bound: `apicall-destination-service`
-- Destinations configured:
-  - `snow_gen` - ServiceNow credentials (required)
-  - `okta_gen` - OKTA credentials (optional, for user token propagation)
+- Destination configured: `okta_gen` (required for OKTA token generation)
 
 **Deploy:**
 ```bash
@@ -165,36 +142,23 @@ cf push snow-mcp-server --strategy rolling
 - **Memory:** 256M
 - **Disk:** 512M
 - **Instances:** 1/1 running
-- **Last Updated:** 2026-08-04 13:48:49 UTC
+- **Pattern:** MCP proxy with OKTA token caching
 
 ### BTP Destination Setup
 
-#### ServiceNow Destination (`snow_gen`)
-1. BTP Cockpit → Subaccount → Connectivity → Destinations
-2. Create/Edit destination `snow_gen`:
-   ```
-   Name: snow_gen
-   Type: HTTP
-   URL: https://your-instance.service-now.com
-   Authentication: Basic Authentication
-   User: service-account-username
-   Password: service-account-password
-   ```
-
-#### OKTA Destination (`okta_gen`) - For User Token Propagation
+#### OKTA Destination (`okta_gen`) - Required
 1. BTP Cockpit → Subaccount → Connectivity → Destinations
 2. Create destination `okta_gen`:
    ```
    Name: okta_gen
    Type: HTTP
    URL: https://your-org.okta.com
-   Authentication: OAuth2 Mutual TLS (or Basic)
+   Authentication: Basic Authentication
+   User: your-okta-client-id
+   Password: your-okta-client-secret
    
    Additional Properties:
-   clientid = your-okta-client-id
-   clientsecret = your-okta-client-secret
    authServer = default
-   tokenServiceURL = https://your-org.okta.com/oauth2/default/v1/token
    ```
 
 ### Local Development
@@ -202,7 +166,10 @@ cf push snow-mcp-server --strategy rolling
 ```bash
 npm install
 cp .env.example .env
-# Edit .env with ServiceNow AND OKTA credentials (if testing locally)
+# Edit .env with OKTA credentials
+# OKTA_TENANT=https://your-org.okta.com
+# OKTA_CLIENT_ID=your-client-id
+# OKTA_CLIENT_SECRET=your-client-secret
 npm run dev  # Uses nodemon for auto-reload
 ```
 
@@ -221,7 +188,7 @@ Content-Type: application/json
 }
 ```
 
-**List Tools:**
+**List Tools (from standard MCP server):**
 ```
 POST https://snow-mcp-server.cfapps.eu10.hana.ondemand.com/mcp
 Content-Type: application/json
@@ -232,7 +199,7 @@ Content-Type: application/json
 }
 ```
 
-**Query RITM:**
+**Call Tool (example: query_incident):**
 ```
 POST https://snow-mcp-server.cfapps.eu10.hana.ondemand.com/mcp
 Content-Type: application/json
@@ -241,10 +208,10 @@ Content-Type: application/json
   "method": "tools/call",
   "id": 3,
   "params": {
-    "name": "query_sc_req_item",
+    "name": "servicenow_itsm_mcp_server-query_incident",
     "arguments": {
-      "filter": "numberISRITM11172625",
-      "limit": 1
+      "filter": "stateINopen",
+      "limit": 10
     }
   }
 }
@@ -254,64 +221,69 @@ Content-Type: application/json
 
 1. In Joule, configure MCP server: `https://snow-mcp-server.cfapps.eu10.hana.ondemand.com`
 2. No authentication required (MCP protocol handles it)
-3. Joule should discover the 5 RITM tools automatically
-4. Use tools to interact with ServiceNow RITMs
+3. Joule discovers all tools from standard MCP server automatically
+4. Use any ServiceNow ITSM tools available in standard server
 
 ## Key Decisions
 
 | Decision | Reason |
 |----------|--------|
-| BTP-hosted MCP proxy | SAP-recommended pattern for Joule-to-non-SAP connectivity (mid-2026) |
-| Express.js instead of CAP | Lightweight, no DB needed, simple MCP protocol |
-| RITM-focused scope | Joule use case for SAP finance integration (2L period openings) |
-| Service account credentials | Simpler auth; sufficient for automated operations without user context |
-| BTP Destination Service | Secure credential management, no hardcoding |
-| Pre-discovery on startup | Avoid timeout on first Joule connection |
-| Questionnaire inclusion | Complete RITM details including form answers in single call |
-| Specialized close/comment ops | Efficient operations for common workflows |
+| Standard MCP server integration | Use ServiceNow's native ITSM MCP server instead of custom REST calls |
+| OKTA token generation | Secure authentication to standard MCP server, supports user identity context |
+| Token caching with TTL | Efficient token reuse, automatic refresh on expiry, 5-min buffer |
+| Tool discovery from server | Dynamic tool list from standard server (not hardcoded) |
+| Express.js proxy | Lightweight, stateless, simple MCP protocol forwarding |
+| BTP Destination Service | Secure credential storage for OKTA config, no hardcoding secrets |
+| Thin proxy approach | Minimal transformation, transparent proxying of all MCP calls |
 
-## SAP Support Validation ✅
+## Integration Details ✅
 
-**Per SAP Support (August 2026):**
+**Standard MCP Server:**
+- ServiceNow ITSM MCP Server (DEV): `https://mckinseydev.service-now.com/sncapps/mcp-server/mcp/servicenow_itsm_mcp_server`
+- Client ID: `65a7f537e4ad4c419eb1ef297db0f351`
+- Authentication: OKTA Bearer Token (OAuth2 Client Credentials flow)
 
-> "The recommended path is: Build a custom BTP-hosted MCP proxy that Joule connects to via OAuth2ClientCredentials (which Joule supports). The proxy handles downstream authentication to ServiceNow — either via service account credentials (simpler) or via IAS/OKTA-mediated token exchange (if user identity propagation is needed)."
-
-**Current Implementation Status:**
-- ✅ Custom BTP-hosted MCP proxy deployed on Cloud Foundry
-- ✅ Joule connects via BTP Destination (OAuth2 Client Credentials)
-- ✅ Proxy authenticates to ServiceNow via service account (Basic Auth)
-- ✅ Aligned with SAP Community blog pattern (May 2026)
-- ⏳ Future: Add IAS/OKTA token exchange if user identity propagation needed
-
-**Reference Architecture:**
-- SAP Community: "Building an Autonomous SAP Joule Agent for ServiceNow ITSM on SAP BTP" (May 2026)
-- SAP Learning Hub: https://architecture.learning.sap.com/docs/ref-arch/137800#security
+**Token Flow:**
+1. Proxy uses OKTA client credentials to get access token
+2. Token is cached with automatic refresh (5-min buffer before expiry)
+3. Token is sent in Bearer Authorization header to standard MCP server
+4. Standard server validates token and processes MCP request
 
 ## Troubleshooting
 
-### Server shows old tools (not 5 RITM tools)
-- Check `Created X MCP tools` in logs
-- Expected: `Created 5 MCP tools`
-- Redeploy: `cf push snow-mcp-server`
+### OKTA Token Generation Fails
+- Verify `okta_gen` destination exists in SAP BTP Cockpit → Connectivity → Destinations
+- Check OKTA credentials are correct (Client ID, Client Secret, Tenant URL)
+- Ensure Destination Service instance is bound: `cf bind-service snow-mcp-server apicall-destination-service`
+- Check OKTA auth server is accessible: `curl https://your-org.okta.com/oauth2/default/v1/token` (should return 401)
+- Verify environment variables set correctly if using fallback (OKTA_TENANT, OKTA_CLIENT_ID, OKTA_CLIENT_SECRET)
 
-### Destination Service API returns 400
-- Verify `snow_gen` destination exists in SAP BTP
-- Check credentials are correct
-- Ensure Destination Service instance is bound (`cf bind-service snow-mcp-server apicall-destination-service`)
+### Cannot Reach Standard MCP Server
+- Verify URL: `https://mckinseydev.service-now.com/sncapps/mcp-server/mcp/servicenow_itsm_mcp_server`
+- Check network connectivity from BTP to ServiceNow (proxy/firewall issues)
+- Verify OKTA token is valid (check Bearer token format in logs)
+- Try calling standard MCP server directly with OKTA token
+
+### No Tools Returned from Standard MCP Server
+- Check standard MCP server URL is correct and accessible
+- Verify OKTA token has correct scopes (servicenow)
+- Check ServiceNow instance has ITSM MCP server enabled
+- Review standard MCP server logs in ServiceNow
 
 ### Joule shows "pending" or timeout
 - Check server logs: `cf logs snow-mcp-server --recent`
-- Verify Joule is sending POST requests to `/mcp` endpoint
-- Check if `notifications/initialized` is being handled (look for `📢 Notification` in logs)
+- Look for `🔍 Discovering tools` or `📤 Calling standard MCP` in logs
+- Verify proxy can reach standard MCP server (network/firewall)
+- Check OKTA token generation is succeeding (look for `✅ New OKTA token obtained`)
 
-### Tools not appearing in Joule
-- Wait 30 seconds after deployment for cache refresh
-- Check response size is small (~1.3KB for 5 tools), not 124KB
-- Verify `tools/list` returns all 5 sc_req_item operations
+### Tool Execution Fails in Joule
+- Check tool name format (should be `servicenow_itsm_mcp_server-<tool_name>`)
+- Verify proxy is forwarding request correctly (check logs for `🔨 Calling tool via standard MCP`)
+- Check standard MCP server response (proxy forwards response unchanged)
 
 ## Monitoring
 
-Check server health:
+Check proxy health:
 ```bash
 # App status
 cf app snow-mcp-server
@@ -323,36 +295,43 @@ cf logs snow-mcp-server --recent
 cf logs snow-mcp-server
 ```
 
-**Expected logs:**
+**Expected startup logs:**
 ```
+🚀 ServiceNow MCP Proxy Server on port 4004
+📍 POST /mcp - MCP JSON-RPC (initialize, tools/list, tools/call)
+📍 GET  /mcp - List tools
+🔌 Proxying to: https://mckinseydev.service-now.com/sncapps/mcp-server/mcp/servicenow_itsm_mcp_server
+Pre-discovering tools from standard MCP server...
+✅ New OKTA token obtained (expires in 3600s)
+✅ Discovered XX tools from standard MCP server
 ✅ Ready
-📥 POST /mcp { method: 'tools/list', id: 1, hasBody: true }
-📋 Tools list
 ```
 
 ## Next Steps & Action Items
 
 ### Immediate (Current Phase)
-- ✅ MCP server deployed and functional on BTP
-- ✅ 7 RITM tools live (CRUD + comment + close)
-- ✅ Questionnaire answers included in get_sc_req_item
-- ⏳ **Test Joule integration** with `/mcp` path (bypass BTP endpoint validation if needed)
-- ⏳ **Verify tool descriptions** prevent agent selection prompts in Joule
+- ✅ MCP proxy integrated with standard ServiceNow MCP server
+- ✅ OKTA token generation and caching working
+- ✅ Tool discovery from standard server functional
+- ⏳ **Test Joule integration** with standard server tools
+- ⏳ **Verify tool execution** end-to-end through proxy
 
 ### Short-term (Next Sprint)
-- [ ] Add incident support (comment, resolve) if needed
 - [ ] Implement request/response logging middleware
-- [ ] Add tool result pagination for large response sets
-- [ ] Unit tests for connector functions
+- [ ] Add tool result validation and transformation layer (if needed)
+- [ ] Implement circuit breaker for standard MCP server calls
+- [ ] Unit tests for standard-mcp-connector
+- [ ] Performance testing: token caching, tool discovery latency
 
 ### Medium-term (Future)
-- [ ] Add more ServiceNow tables (incidents, changes, CHG, etc.)
-- [ ] Implement IAS/OKTA token exchange if user identity propagation required
-- [ ] Tool result streaming for large responses
-- [ ] Tool caching with TTL for performance
+- [ ] Add per-user token generation for user context propagation
+- [ ] Implement token refresh queue to avoid expiry edge cases
+- [ ] Tool result caching with TTL
 - [ ] Webhook/event subscription for downstream Joule notifications
+- [ ] Multi-region fallover if standard MCP server has HA requirement
 
 ### Known Limitations
-- Service account credentials (no user context in ServiceNow)
-- RITM-only scope (can expand to incidents/changes)
-- No audit logging to ServiceNow (only via REST API)
+- Depends on standard MCP server availability (single point of failure)
+- OKTA configuration must be available at startup (no graceful degradation)
+- No audit logging of tool calls (audit is on standard MCP server)
+- Token caching is memory-based (not shared across instances)
