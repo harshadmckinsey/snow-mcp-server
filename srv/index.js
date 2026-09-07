@@ -1,5 +1,6 @@
 const express = require('express');
 const snowConnector = require('./connectors/snow-connector');
+const oktaConnector = require('./connectors/okta-connector');
 
 const app = express();
 app.use(express.json());
@@ -176,6 +177,16 @@ app.post('/mcp', async (req, res) => {
         parsedArgs = JSON.parse(args);
       }
 
+      // Extract user context from Authorization header (OKTA token)
+      let userToken = null;
+      const authHeader = req.headers.authorization;
+      if (authHeader) {
+        userToken = await oktaConnector.getUserContext(authHeader);
+        if (userToken) {
+          console.log(`🔐 Using user context: ${userToken.userId}`);
+        }
+      }
+
       // Strip namespace prefix (e.g., "snowdevtest.snowdev0-get_sc_req_item" → "get_sc_req_item")
       let toolName = name;
       if (name.includes('-')) {
@@ -190,30 +201,30 @@ app.post('/mcp', async (req, res) => {
       let result;
       switch (operation) {
         case 'query':
-          result = await snowConnector.query(tableName, parsedArgs.filter || '', parsedArgs.limit || 10);
+          result = await snowConnector.query(tableName, parsedArgs.filter || '', parsedArgs.limit || 10, userToken);
           break;
         case 'create':
-          result = await snowConnector.create(tableName, parsedArgs.fields || {});
+          result = await snowConnector.create(tableName, parsedArgs.fields || {}, userToken);
           break;
         case 'get':
-          result = await snowConnector.get(tableName, parsedArgs.recordId);
+          result = await snowConnector.get(tableName, parsedArgs.recordId, userToken);
           break;
         case 'update':
-          result = await snowConnector.update(tableName, parsedArgs.recordId, parsedArgs.fields || {});
+          result = await snowConnector.update(tableName, parsedArgs.recordId, parsedArgs.fields || {}, userToken);
           break;
         case 'delete':
-          result = await snowConnector.delete(tableName, parsedArgs.recordId);
+          result = await snowConnector.delete(tableName, parsedArgs.recordId, userToken);
           break;
         case 'comment':
           if (tableName === 'sc_req_item') {
-            result = await snowConnector.commentScReqItem(parsedArgs.recordId, parsedArgs.comments);
+            result = await snowConnector.commentScReqItem(parsedArgs.recordId, parsedArgs.comments, userToken);
           } else {
             throw new Error(`Comment operation not supported for ${tableName}`);
           }
           break;
         case 'close':
           if (tableName === 'sc_req_item') {
-            result = await snowConnector.closeScReqItem(parsedArgs.recordId, parsedArgs.closeNotes);
+            result = await snowConnector.closeScReqItem(parsedArgs.recordId, parsedArgs.closeNotes, userToken);
           } else {
             throw new Error(`Close operation not supported for ${tableName}`);
           }

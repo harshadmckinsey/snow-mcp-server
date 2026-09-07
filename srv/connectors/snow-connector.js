@@ -1,6 +1,7 @@
 const axios = require('axios');
 
 let snowClient = null;
+let userContexts = new Map(); // Cache for user-specific clients
 
 async function getDestinationFromBTP() {
   try {
@@ -120,13 +121,51 @@ async function getDestinationFromBTP() {
   }
 }
 
-async function initializeSnowClient() {
+async function initializeSnowClient(userToken = null) {
+  // If user token provided, create user-specific client
+  if (userToken) {
+    try {
+      console.log(`Initializing ServiceNow client for user: ${userToken.userId}`);
+
+      let baseURL = process.env.SNOW_URL;
+
+      // Try to get from SAP BTP Destination Service if no URL in env
+      if (!baseURL) {
+        try {
+          const dest = await getDestinationFromBTP();
+          baseURL = dest.url;
+        } catch (btpError) {
+          throw new Error('Could not determine ServiceNow URL');
+        }
+      }
+
+      const userClient = axios.create({
+        baseURL: `${baseURL}/api/now`,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${userToken.accessToken}`,
+          'X-User-Context': userToken.userId
+        },
+        timeout: 30000
+      });
+
+      console.log(`✅ User-specific ServiceNow client created for: ${userToken.userId}`);
+      return userClient;
+    } catch (error) {
+      console.error(`Failed to create user client: ${error.message}`);
+      console.log('Falling back to service account...');
+      return initializeSnowClient(); // Fallback to service account
+    }
+  }
+
+  // Service account client (default)
   if (snowClient) {
     return snowClient;
   }
 
   try {
-    console.log('Initializing ServiceNow client...');
+    console.log('Initializing ServiceNow client (service account)...');
 
     let baseURL, username, password;
 
@@ -170,7 +209,7 @@ async function initializeSnowClient() {
       timeout: 30000
     });
 
-    console.log('ServiceNow client initialized successfully');
+    console.log('ServiceNow service account client initialized successfully');
     return snowClient;
   } catch (error) {
     console.error('Failed to initialize ServiceNow client:', error.message);
@@ -216,8 +255,8 @@ async function getTableFields(tableName) {
 }
 
 // Generic CREATE operation
-async function create(tableName, data) {
-  const client = await initializeSnowClient();
+async function create(tableName, data, userToken = null) {
+  const client = await initializeSnowClient(userToken);
 
   try {
     const response = await client.post(`/table/${tableName}`, data);
@@ -254,8 +293,8 @@ async function getScReqItemOptions(recordId) {
 }
 
 // Generic READ/GET operation
-async function get(tableName, recordId) {
-  const client = await initializeSnowClient();
+async function get(tableName, recordId, userToken = null) {
+  const client = await initializeSnowClient(userToken);
 
   try {
     const response = await client.get(`/table/${tableName}/${recordId}`);
@@ -281,8 +320,8 @@ async function get(tableName, recordId) {
 }
 
 // Generic QUERY operation
-async function query(tableName, filter, limit = 10) {
-  const client = await initializeSnowClient();
+async function query(tableName, filter, limit = 10, userToken = null) {
+  const client = await initializeSnowClient(userToken);
 
   try {
     const response = await client.get(`/table/${tableName}`, {
@@ -303,8 +342,8 @@ async function query(tableName, filter, limit = 10) {
 }
 
 // Generic UPDATE operation
-async function update(tableName, recordId, data) {
-  const client = await initializeSnowClient();
+async function update(tableName, recordId, data, userToken = null) {
+  const client = await initializeSnowClient(userToken);
 
   try {
     const response = await client.patch(`/table/${tableName}/${recordId}`, data);
@@ -320,8 +359,8 @@ async function update(tableName, recordId, data) {
 }
 
 // Generic DELETE operation
-async function delete_(tableName, recordId) {
-  const client = await initializeSnowClient();
+async function delete_(tableName, recordId, userToken = null) {
+  const client = await initializeSnowClient(userToken);
 
   try {
     await client.delete(`/table/${tableName}/${recordId}`);
@@ -336,8 +375,8 @@ async function delete_(tableName, recordId) {
 }
 
 // Comment on RITM (sc_req_item)
-async function commentScReqItem(recordId, comments) {
-  const client = await initializeSnowClient();
+async function commentScReqItem(recordId, comments, userToken = null) {
+  const client = await initializeSnowClient(userToken);
 
   try {
     const response = await client.patch(`/table/sc_req_item/${recordId}`, {
@@ -362,8 +401,8 @@ async function commentScReqItem(recordId, comments) {
 }
 
 // Close RITM (sc_req_item)
-async function closeScReqItem(recordId, closeNotes) {
-  const client = await initializeSnowClient();
+async function closeScReqItem(recordId, closeNotes, userToken = null) {
+  const client = await initializeSnowClient(userToken);
 
   try {
     const response = await client.patch(`/table/sc_req_item/${recordId}`, {
